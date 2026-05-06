@@ -7,6 +7,7 @@
     <title>Alter Ego - AI 多元场景口语实战</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="background.css">
+    <link rel="stylesheet" href="story-mode.css">
 </head>
 
 <body>
@@ -76,11 +77,18 @@
                 <p class="hero-subtitle">在安全的虚拟世界中，自信地开口说英语</p>
 
                 <div class="quick-start-card">
-                    <button class="btn-primary btn-large" onclick="navigateTo('scenes')">
-                        <span class="btn-icon">⚡</span>
-                        开始练习
-                        <span class="btn-icon">→</span>
-                    </button>
+                    <div class="hero-buttons">
+<button class="btn-primary btn-large" onclick="startRandomPractice()">
+                            <span class="btn-icon">⚡</span>
+                            开始练习
+                            <span class="btn-icon">
+                        </button>
+                        <button class="btn-story-mode" onclick="startStoryMode()">
+                            <span class="btn-icon">📖</span>
+                            剧情模式
+                            <span class="btn-badge">NEW</span>
+                        </button>
+                    </div>
                     <p class="continue-practice" id="continue-practice" style="display: none;">
                         继续上次练习：<span id="last-scene-name">咖啡厅</span>
                     </p>
@@ -231,6 +239,23 @@
                 <p>选择一个场景开始你的口语练习</p>
             </div>
             <div class="scenes-grid">
+                <div class="scene-card story-card" data-scene="first-arrival">
+                    <div class="scene-icon">🛬</div>
+                    <h3>初抵异乡</h3>
+                    <p class="scene-desc">伦敦希思罗机场 - AI互动剧情</p>
+                    <div class="scene-difficulty">
+                        <span class="star">★</span>
+                        <span class="star">★</span>
+                        <span class="star">☆</span>
+                        <span class="star">☆</span>
+                        <span class="star">☆</span>
+                    </div>
+                    <div class="scene-status">
+                        <span class="check-icon">✓</span>
+                        <span>已解锁</span>
+                    </div>
+                    <div class="scene-badge">📖 剧情</div>
+                </div>
                 <div class="scene-card" data-scene="tutorial">
                     <div class="scene-icon">🎓</div>
                     <h3>新手教程</h3>
@@ -448,8 +473,80 @@
                 取消
             </button>
         </section>
+
+        <!-- ==========================================
+        剧情模式 - 视觉小说页面
+        ========================================== -->
+        <section id="story-mode" class="page">
+            <!-- 转场覆盖层 -->
+            <div class="vn-transition" id="vn-transition"></div>
+
+            <!-- 场景背景层 -->
+            <div class="vn-background" id="vn-background"></div>
+            <div class="vn-overlay"></div>
+
+            <!-- 人物立绘层 -->
+            <div class="vn-sprites" id="vn-sprites">
+                <div class="vn-sprite sprite-left" id="sprite-left"></div>
+                <div class="vn-sprite sprite-right" id="sprite-right"></div>
+                <div class="vn-sprite sprite-center" id="sprite-center"></div>
+            </div>
+
+            <!-- 用户历史气泡 -->
+            <div class="vn-user-history" id="vn-user-history"></div>
+
+            <!-- 章节标题覆盖层 -->
+            <div class="vn-chapter-title" id="vn-chapter-title">
+                <div class="chapter-number">Chapter 1</div>
+                <div class="chapter-divider"></div>
+                <div class="chapter-main" id="vn-chapter-main">初抵异乡</div>
+                <div class="chapter-sub" id="vn-chapter-sub">First Arrival in a Foreign Land</div>
+            </div>
+
+            <!-- 场景结束遮罩 -->
+            <div class="vn-scene-end" id="vn-scene-end">
+                <div class="end-icon">✈️</div>
+                <div class="end-title" id="vn-end-title">场景完成！</div>
+                <div class="end-subtitle" id="vn-end-subtitle">你成功完成了第一章的挑战</div>
+                <div class="end-xp" id="vn-end-xp">+100 XP</div>
+                <button class="end-btn" onclick="StoryEngine.finishChapter()">
+                    返回首页
+                </button>
+            </div>
+
+            <!-- 顶部 HUD -->
+            <div class="vn-hud">
+                <button class="vn-back-btn" onclick="exitStoryMode()">✕ 退出剧情</button>
+                <span class="vn-chapter-info" id="vn-chapter-info">第一章：初抵异乡</span>
+                <span class="vn-scene-name" id="vn-scene-name"></span>
+            </div>
+
+            <!-- 底部对话框 -->
+            <div class="vn-dialogue-box" id="vn-dialogue-box">
+                <div class="vn-dialogue-inner" id="vn-dialogue-inner">
+                    <div class="vn-speaker-name" id="vn-speaker-name"></div>
+                    <div class="vn-dialogue-text" id="vn-dialogue-text"></div>
+
+                    <!-- 文本输入区 -->
+                    <div class="vn-input-area hidden" id="vn-input-area">
+                        <input type="text" id="vn-text-input" placeholder="输入你的英文回答..." />
+                        <button class="vn-record-btn" id="vn-record-btn" title="模拟录音">
+                            🎤
+                        </button>
+                        <button class="vn-send-btn" id="vn-send-btn" onclick="StoryEngine.handleUserInput()">发送</button>
+                    </div>
+
+                    <!-- 选择支 -->
+                    <div class="vn-choices hidden" id="vn-choices"></div>
+
+                    <!-- 继续按钮 -->
+                    <button class="vn-continue hidden" id="vn-continue" onclick="StoryEngine.nextStep()">▼ 点击继续</button>
+                </div>
+            </div>
+        </section>
     </div>
 
+    <script src="story-data.js"></script>
     <script src="app.js"></script>
 </body>
 

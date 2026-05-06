@@ -430,6 +430,33 @@ function selectScene(sceneId) {
     initializeConversation(sceneId);
 }
 
+function startRandomPractice() {
+    // 获取所有已解锁的场景
+    const unlocked = getUnlockedScenes();
+    
+    // 过滤掉剧情模式场景（class 为 story-card 的场景）
+    const storySceneIds = [];
+    document.querySelectorAll('.scene-card.story-card').forEach(card => {
+        const sceneId = card.dataset.scene;
+        if (sceneId) storySceneIds.push(sceneId);
+    });
+    
+    const nonStoryScenes = unlocked.filter(id => !storySceneIds.includes(id));
+    
+    if (nonStoryScenes.length === 0) {
+        // 没有可用的非剧情场景，导航到场景选择页
+        navigateTo('scenes');
+        return;
+    }
+    
+    // 随机选择一个场景
+    const randomIndex = Math.floor(Math.random() * nonStoryScenes.length);
+    const randomSceneId = nonStoryScenes[randomIndex];
+    
+    // 直接开始该场景的练习
+    selectScene(randomSceneId);
+}
+
 // ========================================
 // 对话系统
 // ========================================
@@ -1041,6 +1068,57 @@ function showNotification(message, type = 'info') {
 // ========================================
 // 场景卡片点击事件
 // ========================================
+function selectScene(sceneId) {
+    // 剧情模式场景：初抵异乡
+    if (sceneId === 'first-arrival') {
+        startStoryMode();
+        return;
+    }
+
+    // 检查是否解锁
+    const lockedScenes = ['airport', 'meeting'];
+    // airport 需要完成 cafe 解锁（简化处理：暂时允许直接进入）
+    // meeting 需要完成 airport 解锁
+    
+    // 普通场景：进入练习页
+    AppState.currentScene = sceneId;
+    navigateTo('practice');
+
+    // 设置场景标题
+    const sceneNames = {
+        'tutorial': '🎓 新手教程',
+        'cafe': '☕ 咖啡厅',
+        'airport': '✈️ 机场',
+        'meeting': '💼 会议室'
+    };
+    const titleEl = document.getElementById('scene-title');
+    if (titleEl) {
+        titleEl.textContent = sceneNames[sceneId] || '场景练习';
+    }
+
+    // 清空对话历史
+    AppState.conversation = [];
+    const conversationArea = document.getElementById('conversation');
+    if (conversationArea) {
+        conversationArea.innerHTML = '';
+    }
+
+    // 开始计时
+    startSessionTimer();
+
+    // 添加欢迎消息
+    setTimeout(() => {
+        const welcomeMessages = {
+            'tutorial': "Welcome! I'm your AI language partner. What would you like to practice today?",
+            'cafe': "Good afternoon! Welcome to our cafe. What can I get for you today?",
+            'airport': "Good morning! Welcome to the airport. May I see your passport and ticket please?",
+            'meeting': "Good morning, everyone! Thank you for joining the meeting today. Let's get started."
+        };
+        const msg = welcomeMessages[sceneId] || "Hello! Let's start our conversation.";
+        addMessage('ai', msg);
+    }, 500);
+}
+
 document.addEventListener('click', (e) => {
     const sceneCard = e.target.closest('.scene-card');
     if (sceneCard) {
@@ -1081,4 +1159,554 @@ function updateSessionStats() {
             checkAchievements();
         }
     }
+}
+
+// ============================================================
+// 剧情模式 / 视觉小说引擎 - StoryEngine
+// ============================================================
+const StoryEngine = {
+    // 当前状态
+    currentSceneId: null,
+    currentSceneData: null,
+    currentStepIndex: 0,
+    currentStep: null,
+    isWaitingForInput: false,
+    isTyping: false,          // 打字机效果进行中
+    typingTimer: null,
+    userMessageHistory: [],   // 记录用户发言历史
+
+    // 启动剧情模式（由外部调用）
+    start(sceneId) {
+        const scene = SCENES[sceneId];
+        if (!scene) {
+            console.error('场景不存在:', sceneId);
+            alert('该场景尚未开放，敬请期待！');
+            return;
+        }
+
+        this.currentSceneId = sceneId;
+        this.currentSceneData = scene;
+        this.currentStepIndex = 0;
+        this.userMessageHistory = [];
+
+        // 显示剧情模式页面
+        document.getElementById('story-mode').classList.add('active');
+
+        // 设置场景背景
+        const bg = document.getElementById('vn-background');
+        bg.style.backgroundImage = `url('${scene.background}')`;
+        bg.classList.add('fade-in');
+
+        // 更新HUD信息
+        const chapter = CHAPTERS.find(c => c.id === scene.chapterId);
+        document.getElementById('vn-chapter-info').textContent =
+            chapter ? `${chapter.title}：${scene.name}` : scene.name;
+        document.getElementById('vn-scene-name').textContent = scene.name;
+
+        // 显示章节标题动画
+        this.showChapterTitle(() => {
+            // 标题消失后，开始推进场景
+            this.advanceToNextRealStep();
+        });
+
+        // 隐藏结束遮罩
+        document.getElementById('vn-scene-end').classList.remove('visible');
+    },
+
+    // 显示章节标题动画
+    showChapterTitle(callback) {
+        const title = document.getElementById('vn-chapter-title');
+        const chapterData = CHAPTERS.find(c => c.id === this.currentSceneData.chapterId);
+
+        if (chapterData) {
+            document.getElementById('vn-chapter-main').textContent = chapterData.title;
+            document.getElementById('vn-chapter-sub').textContent = chapterData.subtitle;
+        }
+
+        // 触发动画
+        title.classList.add('visible', 'animating');
+
+        // 4秒后隐藏
+        setTimeout(() => {
+            title.classList.remove('visible', 'animating');
+            if (callback) {
+                setTimeout(callback, 500);
+            }
+        }, 4000);
+    },
+
+    // 推进到下一个"实际"步骤（跳过加入的过渡步骤）
+    advanceToNextRealStep() {
+        // 检查是否到达结尾
+        if (this.currentStepIndex >= this.currentSceneData.steps.length) {
+            this.showSceneEnd();
+            return;
+        }
+
+        const step = this.currentSceneData.steps[this.currentStepIndex];
+        this.currentStep = step;
+        this.currentStepIndex++;
+
+        // 隐藏之前所有的交互元素
+        this.hideAllInteractions();
+
+        // 根据步骤类型渲染
+        switch (step.type) {
+            case 'narrator':
+                this.renderNarrator(step);
+                break;
+            case 'dialogue':
+                this.renderDialogue(step);
+                break;
+            case 'user_input':
+                this.renderUserInput(step);
+                break;
+            default:
+                this.advanceToNextRealStep();
+        }
+    },
+
+    // 隐藏所有交互区域
+    hideAllInteractions() {
+        document.getElementById('vn-input-area').classList.add('hidden');
+        document.getElementById('vn-choices').classList.add('hidden');
+        document.getElementById('vn-continue').classList.add('hidden');
+    },
+
+    // 渲染旁白
+    renderNarrator(step) {
+        const inner = document.getElementById('vn-dialogue-inner');
+        const speaker = document.getElementById('vn-speaker-name');
+        const text = document.getElementById('vn-dialogue-text');
+
+        inner.classList.add('narrator');
+        speaker.textContent = '— 旁白 —';
+        text.textContent = '';
+
+        // 背景特效
+        const bg = document.getElementById('vn-background');
+        if (step.backgroundEffect === 'dim') {
+            bg.classList.add('dim');
+        } else {
+            bg.classList.remove('dim');
+        }
+
+        // 打字机效果
+        this.typewriter(step.text, text, () => {
+            // 显示继续按钮
+            document.getElementById('vn-continue').classList.remove('hidden');
+        });
+    },
+
+    // 渲染对话
+    renderDialogue(step) {
+        const inner = document.getElementById('vn-dialogue-inner');
+        const speaker = document.getElementById('vn-speaker-name');
+        const text = document.getElementById('vn-dialogue-text');
+
+        inner.classList.remove('narrator');
+        speaker.textContent = step.speakerName || step.speaker || '';
+        text.textContent = '';
+
+        // 更新立绘
+        this.updateSprite(step);
+
+        // 打字机效果
+        this.typewriter(step.text, text, () => {
+            document.getElementById('vn-continue').classList.remove('hidden');
+        });
+    },
+
+    // 渲染用户输入
+    renderUserInput(step) {
+        const inner = document.getElementById('vn-dialogue-inner');
+        const speaker = document.getElementById('vn-speaker-name');
+        const text = document.getElementById('vn-dialogue-text');
+
+        inner.classList.remove('narrator');
+        speaker.textContent = step.speakerName || step.speaker || '';
+
+        // 显示输入提示
+        text.innerHTML = `<span style="color:#FFD93D;">💬 ${step.prompt}</span>`;
+
+        // 更新立绘
+        this.updateSprite(step);
+
+        // 显示输入区
+        const inputArea = document.getElementById('vn-input-area');
+        inputArea.classList.remove('hidden');
+        const inputField = document.getElementById('vn-text-input');
+        inputField.value = '';
+        inputField.placeholder = step.placeholder || '输入你的英文回答...';
+        inputField.focus();
+
+        this.isWaitingForInput = true;
+
+        // 绑定回车键
+        inputField.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.handleUserInput();
+            }
+        };
+    },
+
+    // 处理用户输入
+    handleUserInput() {
+        if (!this.isWaitingForInput) return;
+
+        const inputField = document.getElementById('vn-text-input');
+        const userText = inputField.value.trim();
+
+        if (!userText) {
+            // 用户没输入，给个默认行为
+            inputField.placeholder = '请至少输入一些内容...';
+            return;
+        }
+
+        // 记录用户消息历史
+        this.userMessageHistory.push(userText);
+        this.addUserBubble(userText);
+
+        // 隐藏输入区
+        document.getElementById('vn-input-area').classList.add('hidden');
+        this.isWaitingForInput = false;
+
+        // 匹配分支
+        const step = this.currentStep;
+        const matchedBranch = this.matchUserInput(userText, step.branches);
+
+        // 显示NPC回应
+        if (matchedBranch) {
+            const response = matchedBranch.response;
+
+            // 显示NPC的回应
+            const inner = document.getElementById('vn-dialogue-inner');
+            const speaker = document.getElementById('vn-speaker-name');
+            const text = document.getElementById('vn-dialogue-text');
+
+            inner.classList.remove('narrator');
+            speaker.textContent = step.speakerName || step.speaker || '';
+
+            // 更新立绘表情（如果有不同表情）
+            if (response.expression) {
+                step.expression = response.expression;
+                this.updateSprite(step);
+            }
+
+            this.typewriter(response.text, text, () => {
+                // 检查是否是结束分支
+                if (matchedBranch.isEnding) {
+                    setTimeout(() => {
+                        this.showSceneEnd();
+                    }, 1500);
+                    return;
+                }
+
+                // 如果有额外的过渡步骤，先插入
+                if (matchedBranch.nextStepAddition) {
+                    const additions = matchedBranch.nextStepAddition;
+                    // 将额外步骤插入到当前步骤之后
+                    const steps = this.currentSceneData.steps;
+                    const insertIndex = this.currentStepIndex;
+                    for (let i = additions.length - 1; i >= 0; i--) {
+                        steps.splice(insertIndex, 0, additions[i]);
+                    }
+                }
+
+                // 显示继续按钮，用户点击后继续
+                document.getElementById('vn-continue').classList.remove('hidden');
+            });
+        }
+    },
+
+    // 用户输入匹配引擎
+    matchUserInput(userText, branches) {
+        const lowerText = userText.toLowerCase();
+
+        // 先按优先级匹配（排除fallback）
+        const normalBranches = branches.filter(b => b.matchMode !== 'fallback');
+        const fallbackBranch = branches.find(b => b.matchMode === 'fallback');
+
+        for (const branch of normalBranches) {
+            if (branch.matchMode === 'keyword') {
+                // 关键词匹配模式
+                const keywords = branch.match;
+                let hitCount = 0;
+                for (const kw of keywords) {
+                    if (lowerText.includes(kw.toLowerCase())) {
+                        hitCount++;
+                    }
+                }
+                const minRequired = branch.minKeywords || 1;
+                if (hitCount >= minRequired) {
+                    // 如果分支有语法正确性标记，这里我们简单判断：
+                    // 如果用户输入包含 "where is" 或符合基本问句结构，视为正确
+                    // 否则走语法纠错分支
+                    if (branch.hasOwnProperty('correctGrammar')) {
+                        const hasGoodGrammar = this.checkBasicGrammar(lowerText);
+                        if (hasGoodGrammar && branch.correctGrammar) {
+                            return branch;
+                        }
+                        if (!hasGoodGrammar && !branch.correctGrammar) {
+                            return branch;
+                        }
+                        // 跳过不匹配的语法分支，继续尝试其他
+                        continue;
+                    }
+                    return branch;
+                }
+            } else if (branch.matchMode === 'any') {
+                // 任意关键词匹配
+                for (const kw of branch.match) {
+                    if (lowerText.includes(kw.toLowerCase())) {
+                        return branch;
+                    }
+                }
+            }
+        }
+
+        // 没有匹配到，使用fallback
+        return fallbackBranch || normalBranches[0];
+    },
+
+    // 简单语法检查
+    checkBasicGrammar(text) {
+        // 简单判断：问句以 wh- 词开头且包含 is/are/do/can 等
+        const startsWithWh = /^(where|what|when|how|why|who|which|whose|whom|can|could|may|might|do|does|did|is|are|was|were|have|has|had|will|would)/i;
+        if (startsWithWh.test(text.trim())) {
+            return true;
+        }
+
+        // 常见的错误模式
+        const badPatterns = [
+            /where.*is it\?$/i,  // "where my flight is it" 这种句式（但我们的关键词引擎捕获的是好的）
+            /what.*is it\?$/i,
+        ];
+
+        // 检查是否有明显语法错误
+        const errorPatterns = [
+            /where.*is.*\bis\b/i,    // "where is my flight is" - 多余的 is
+            /what.*is.*\bis\b/i,
+            /i wants/i,
+            /i goes/i,
+            /where.*at\b/i,          // "where is it at" - 多余介词
+            /where.*to\b\?/i,        // "where to go?"
+        ];
+
+        for (const pattern of errorPatterns) {
+            if (pattern.test(text)) {
+                return false;
+            }
+        }
+
+        // 如果文本很短（3个词以下），标记为语法不完整
+        const wordCount = text.trim().split(/\s+/).length;
+        if (wordCount < 3) {
+            return false;
+        }
+
+        return true; // 默认视为语法正确
+    },
+
+    // 更新立绘
+    updateSprite(step) {
+        if (!step.character) return;
+
+        const spriteConfig = CHARACTER_SPRITES[step.character];
+        if (!spriteConfig) return;
+
+        const basePath = spriteConfig.imagePath;
+        const expressionFile = step.expression || spriteConfig.defaultExpression;
+        const imageUrl = basePath + expressionFile;
+
+        // 确定目标容器
+        let spriteContainer;
+        if (step.position === 'left') {
+            spriteContainer = document.getElementById('sprite-left');
+        } else if (step.position === 'right') {
+            spriteContainer = document.getElementById('sprite-right');
+        } else {
+            spriteContainer = document.getElementById('sprite-center');
+        }
+
+        // 清空其他位置的立绘（剧情模式下同一时间通常只显示一个NPC+玩家）
+        // 但保持玩家的立绘始终存在（girl2）
+        // 简化处理：每次更新目标位置，隐藏其他位置（除特殊情况）
+
+        // 更新目标立绘
+        spriteContainer.innerHTML = `<img src="${imageUrl}" alt="${spriteConfig.name}" />`;
+        spriteContainer.classList.add('visible', 'entering');
+
+        // 300ms后移除entering类
+        setTimeout(() => {
+            spriteContainer.classList.remove('entering');
+        }, 600);
+    },
+
+    // 添加用户气泡
+    addUserBubble(text) {
+        const history = document.getElementById('vn-user-history');
+        const bubble = document.createElement('div');
+        bubble.className = 'vn-user-bubble';
+        bubble.textContent = text;
+        history.appendChild(bubble);
+
+        // 5秒后淡出
+        setTimeout(() => {
+            bubble.style.opacity = '0';
+            bubble.style.transition = 'opacity 1s ease';
+            setTimeout(() => {
+                bubble.remove();
+            }, 1000);
+        }, 5000);
+    },
+
+    // 打字机效果
+    typewriter(fullText, element, callback) {
+        // 清除之前的计时器
+        if (this.typingTimer) {
+            clearTimeout(this.typingTimer);
+        }
+        this.isTyping = true;
+
+        element.textContent = '';
+        let index = 0;
+        const speed = 35; // 毫秒/字
+
+        const type = () => {
+            if (index < fullText.length) {
+                element.textContent += fullText.charAt(index);
+                index++;
+                this.typingTimer = setTimeout(type, speed);
+            } else {
+                this.isTyping = false;
+                this.typingTimer = null;
+                if (callback) callback();
+            }
+        };
+
+        type();
+    },
+
+    // 跳过打字机效果（立即显示全部文本）
+    skipTyping() {
+        if (this.typingTimer && this.isTyping) {
+            clearTimeout(this.typingTimer);
+            this.typingTimer = null;
+            this.isTyping = false;
+
+            // 根据当前步骤类型获取完整文本
+            const step = this.currentStep;
+            if (step) {
+                const textEl = document.getElementById('vn-dialogue-text');
+                if (step.type === 'narrator' || step.type === 'dialogue') {
+                    textEl.textContent = step.text;
+                }
+                // 显示继续按钮
+                document.getElementById('vn-continue').classList.remove('hidden');
+            }
+        }
+    },
+
+    // "继续"按钮处理 - 推进到下一步
+    nextStep() {
+        if (this.isTyping) {
+            // 如果正在打字，先跳过打字机效果
+            this.skipTyping();
+            return;
+        }
+
+        if (this.isWaitingForInput) return;
+
+        // 隐藏继续按钮
+        document.getElementById('vn-continue').classList.add('hidden');
+        // 隐藏所有交互
+        this.hideAllInteractions();
+
+        // 推进到下一步
+        this.advanceToNextRealStep();
+    },
+
+    // 显示场景结束
+    showSceneEnd() {
+        const endOverlay = document.getElementById('vn-scene-end');
+        const rewards = CHAPTER_REWARDS[this.currentSceneData.chapterId];
+
+        if (rewards) {
+            document.getElementById('vn-end-title').textContent = rewards.achievementName;
+            document.getElementById('vn-end-subtitle').textContent = rewards.achievementDesc;
+            document.getElementById('vn-end-xp').textContent = `+${rewards.xp} XP`;
+        }
+
+        endOverlay.classList.add('visible');
+
+        // 发放奖励
+        if (rewards) {
+            this.grantReward(rewards);
+        }
+    },
+
+    // 发放章节奖励
+    grantReward(rewards) {
+        // 更新XP
+        if (typeof AppState !== 'undefined') {
+            AppState.xp = (AppState.xp || 0) + rewards.xp;
+            const newLevel = calculateLevel(AppState.xp);
+            if (AppState.level !== newLevel) {
+                AppState.level = newLevel;
+                showLevelUpNotification(newLevel);
+            }
+            saveUserData();
+            updateStatsDisplay();
+        }
+    },
+
+    // 完成章节，返回首页
+    finishChapter() {
+        // 隐藏剧情模式
+        document.getElementById('story-mode').classList.remove('active');
+        document.getElementById('vn-scene-end').classList.remove('visible');
+
+        // 清理立绘
+        document.querySelectorAll('.vn-sprite').forEach(s => {
+            s.classList.remove('visible', 'entering');
+            s.innerHTML = '';
+        });
+
+        // 清理用户气泡
+        document.getElementById('vn-user-history').innerHTML = '';
+
+        // 重置背景
+        const bg = document.getElementById('vn-background');
+        bg.classList.remove('dim');
+        bg.style.backgroundImage = '';
+
+        // 导航回首页
+        if (typeof navigateTo === 'function') {
+            navigateTo('home');
+        }
+
+        // 更新统计
+        if (typeof updateStatsDisplay === 'function') {
+            updateStatsDisplay();
+        }
+    }
+};
+
+// ============================================================
+// 全局入口函数：启动剧情模式和退出剧情模式
+// ============================================================
+function startStoryMode() {
+    StoryEngine.start('scene1_arrival');
+}
+
+function exitStoryMode() {
+    // 显示转场
+    const transition = document.getElementById('vn-transition');
+    transition.classList.add('active');
+    setTimeout(() => {
+        StoryEngine.finishChapter();
+        transition.classList.remove('active');
+    }, 400);
 }
